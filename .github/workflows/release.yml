@@ -1,0 +1,305 @@
+# =============================================================================
+# Osaurus Plugin Release Workflow
+# =============================================================================
+# This workflow automatically builds, signs, releases, and registers your
+# Osaurus plugin when you push a version tag (e.g., 1.0.0).
+#
+# SETUP:
+# 1. Update the configuration below for your plugin
+# 2. Add the required secrets to your repository:
+#    - REGISTRY_PAT: GitHub PAT with repo access to dinoki-ai/osaurus-tools
+#    - MINISIGN_SECRET_KEY: Your minisign private key
+#    - MINISIGN_PUBLIC_KEY: Your minisign public key
+#    - MINISIGN_PASSWORD: Key password (optional, can be empty)
+#
+# USAGE:
+#   git tag 1.0.0
+#   git push origin 1.0.0
+# =============================================================================
+
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "[0-9]*"
+
+permissions:
+  contents: write
+
+# =============================================================================
+# CONFIGURATION - Update these values for your plugin
+# =============================================================================
+env:
+  # Your plugin ID (must match manifest.json)
+  PLUGIN_ID: osaurus.emacs
+
+  # Display name for the plugin
+  PLUGIN_NAME: Emacs
+
+  # Brief description of what the plugin does
+  PLUGIN_DESCRIPTION: Execute Emacs Lisp code in a running Emacs instance via emacsclient
+
+  # The built dynamic library name (without lib prefix and .dylib extension)
+  DYLIB_NAME: Emacs
+
+  # License (e.g., MIT, Apache-2.0)
+  LICENSE: MIT
+
+  # Minimum macOS version required
+  MIN_MACOS: "13.0"
+
+  # Minimum Osaurus version required (optional)
+  MIN_OSAURUS: "0.5.0"
+
+  # Registry repository to open PRs against
+  REGISTRY_REPO: dinoki-ai/osaurus-tools
+
+# =============================================================================
+# JOBS - No changes needed below this line
+# =============================================================================
+jobs:
+  build:
+    runs-on: macos-14
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+      sha256: ${{ steps.sha256.outputs.SHA256 }}
+      size: ${{ steps.size.outputs.SIZE }}
+      signature_b64: ${{ steps.minisign.outputs.SIGNATURE_B64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "5.9"
+
+      - name: Build Release
+        run: swift build -c release
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Package artifact
+        run: |
+          mkdir -p dist
+          cp ".build/release/lib${{ env.DYLIB_NAME }}.dylib" dist/
+          cp manifest.json dist/
+          cd dist
+          zip -r "../${{ env.PLUGIN_ID }}-${{ steps.version.outputs.VERSION }}.zip" .
+
+      - name: Calculate SHA256
+        id: sha256
+        run: |
+          SHA=$(shasum -a 256 "${{ env.PLUGIN_ID }}-${{ steps.version.outputs.VERSION }}.zip" | cut -d ' ' -f 1)
+          echo "SHA256=$SHA" >> $GITHUB_OUTPUT
+
+      - name: Get artifact size
+        id: size
+        run: |
+          SIZE=$(stat -f%z "${{ env.PLUGIN_ID }}-${{ steps.version.outputs.VERSION }}.zip")
+          echo "SIZE=$SIZE" >> $GITHUB_OUTPUT
+
+      - name: Install minisign
+        run: brew install minisign
+
+      - name: Sign artifact with minisign
+        id: minisign
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "No MINISIGN_SECRET_KEY configured, skipping signing"
+            echo "SIGNATURE_B64=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "$MINISIGN_SECRET_KEY" > $RUNNER_TEMP/minisign.key
+
+          ARTIFACT="${{ env.PLUGIN_ID }}-${{ steps.version.outputs.VERSION }}.zip"
+          if [ -n "$MINISIGN_PASSWORD" ]; then
+            echo "$MINISIGN_PASSWORD" | minisign -Slm "$ARTIFACT" -s $RUNNER_TEMP/minisign.key -x "${ARTIFACT}.minisig"
+          else
+            minisign -Slm "$ARTIFACT" -s $RUNNER_TEMP/minisign.key -x "${ARTIFACT}.minisig" -W
+          fi
+
+          SIGNATURE_B64=$(base64 -i "${ARTIFACT}.minisig")
+          echo "SIGNATURE_B64=$SIGNATURE_B64" >> $GITHUB_OUTPUT
+
+          rm -f $RUNNER_TEMP/minisign.key
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "${{ env.PLUGIN_NAME }} v${{ steps.version.outputs.VERSION }}"
+          files: |
+            ${{ env.PLUGIN_ID }}-${{ steps.version.outputs.VERSION }}.zip
+            ${{ env.PLUGIN_ID }}-${{ steps.version.outputs.VERSION }}.zip.minisig
+          fail_on_unmatched_files: false
+          generate_release_notes: true
+
+      - name: Upload registry JSON artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-outputs
+          path: |
+            ${{ env.PLUGIN_ID }}-${{ steps.version.outputs.VERSION }}.zip
+            manifest.json
+
+  open-registry-pr:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: build-outputs
+
+      - name: Generate registry JSON
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+          SIZE: ${{ needs.build.outputs.size }}
+          SIGNATURE_B64: ${{ needs.build.outputs.signature_b64 }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          TAG_NAME: ${{ github.ref_name }}
+          MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY }}
+        run: |
+          # Decode signature if present
+          if [ -n "$SIGNATURE_B64" ]; then
+            MINISIGN_SIG=$(echo "$SIGNATURE_B64" | base64 -d)
+          else
+            MINISIGN_SIG=""
+          fi
+
+          echo "$MINISIGN_SIG" > /tmp/minisign_sig.txt
+
+          python3 << 'PYTHON_SCRIPT'
+          import json
+          import os
+          from datetime import datetime
+
+          # Read manifest for tool definitions
+          with open('manifest.json', 'r') as f:
+              manifest = json.load(f)
+
+          plugin_id = os.environ["PLUGIN_ID"]
+          plugin_name = os.environ["PLUGIN_NAME"]
+          plugin_desc = os.environ["PLUGIN_DESCRIPTION"]
+          version = os.environ["VERSION"]
+          sha256 = os.environ["SHA256"]
+          size = int(os.environ["SIZE"])
+          repo_url = os.environ["REPO_URL"]
+          repo_owner = os.environ["REPO_OWNER"]
+          tag_name = os.environ["TAG_NAME"]
+          license_type = os.environ["LICENSE"]
+          min_macos = os.environ["MIN_MACOS"]
+          minisign_public_key = os.environ.get("MINISIGN_PUBLIC_KEY", "")
+
+          try:
+              with open('/tmp/minisign_sig.txt', 'r') as f:
+                  minisign_sig = f.read().strip()
+          except:
+              minisign_sig = ""
+
+          # Extract tools from manifest
+          tools = []
+          if "capabilities" in manifest and "tools" in manifest["capabilities"]:
+              for tool in manifest["capabilities"]["tools"]:
+                  tools.append({
+                      "name": tool.get("id", tool.get("name", "")),
+                      "description": tool.get("description", "")
+                  })
+
+          artifact = {
+              "os": "macos",
+              "arch": "arm64",
+              "min_macos": min_macos,
+              "url": f"{repo_url}/releases/download/{tag_name}/{plugin_id}-{version}.zip",
+              "sha256": sha256,
+              "size": size
+          }
+
+          if minisign_sig:
+              artifact["minisign"] = {"signature": minisign_sig}
+
+          data = {
+              "plugin_id": plugin_id,
+              "name": plugin_name,
+              "homepage": repo_url,
+              "license": license_type,
+              "authors": [repo_owner],
+              "capabilities": {"tools": tools},
+              "versions": [{
+                  "version": version,
+                  "release_date": datetime.utcnow().strftime("%Y-%m-%d"),
+                  "artifacts": [artifact]
+              }]
+          }
+
+          if minisign_public_key:
+              data["public_keys"] = {"minisign": minisign_public_key}
+
+          with open('registry-entry.json', 'w') as f:
+              json.dump(data, f, indent=2)
+
+          print(f"Generated registry-entry.json for {plugin_id} v{version}")
+          PYTHON_SCRIPT
+
+      - name: Checkout registry repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.REGISTRY_REPO }}
+          token: ${{ secrets.REGISTRY_PAT }}
+          path: registry
+
+      - name: Create or update plugin entry
+        run: |
+          PLUGIN_FILE="registry/plugins/${{ env.PLUGIN_ID }}.json"
+
+          if [ -f "$PLUGIN_FILE" ]; then
+            echo "Plugin exists, merging new version..."
+            NEW_VERSION=$(jq '.versions[0]' registry-entry.json)
+            jq --argjson newver "$NEW_VERSION" '.versions = [$newver] + .versions' "$PLUGIN_FILE" > tmp.json
+            mv tmp.json "$PLUGIN_FILE"
+          else
+            echo "New plugin, creating entry..."
+            cp registry-entry.json "$PLUGIN_FILE"
+          fi
+
+          jq '.' "$PLUGIN_FILE" > tmp.json && mv tmp.json "$PLUGIN_FILE"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.REGISTRY_PAT }}
+          path: registry
+          branch: "add-${{ env.PLUGIN_ID }}-${{ needs.build.outputs.version }}"
+          delete-branch: true
+          title: "Add ${{ env.PLUGIN_ID }} ${{ needs.build.outputs.version }}"
+          body: |
+            ## New Plugin Release
+
+            | Field | Value |
+            |-------|-------|
+            | **Plugin** | ${{ env.PLUGIN_ID }} |
+            | **Version** | ${{ needs.build.outputs.version }} |
+            | **SHA256** | `${{ needs.build.outputs.sha256 }}` |
+            | **Size** | ${{ needs.build.outputs.size }} bytes |
+            | **Signed** | ${{ needs.build.outputs.signature_b64 != '' && '✅ Yes' || '❌ No' }} |
+
+            **Source:** ${{ github.server_url }}/${{ github.repository }}
+            **Release:** ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+
+            ---
+            *Automatically generated by the release workflow.*
+          commit-message: "Add ${{ env.PLUGIN_ID }} v${{ needs.build.outputs.version }}"
+          labels: |
+            automated
+            new-plugin

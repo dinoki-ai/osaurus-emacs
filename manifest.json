@@ -1,0 +1,29 @@
+{
+  "plugin_id": "osaurus.emacs",
+  "version": "0.1.0",
+  "description": "Execute Emacs Lisp code in a running Emacs instance",
+  "capabilities": {
+    "tools": [
+      {
+        "id": "execute_emacs_lisp_code",
+        "description": "Execute Emacs Lisp code in a running Emacs instance via emacsclient. Requires Emacs server to be running (M-x server-start).",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "The Emacs Lisp code to execute"
+            },
+            "emacsclient_path": {
+              "type": "string",
+              "description": "Optional path to emacsclient binary. Auto-detected if not provided."
+            }
+          },
+          "required": ["code"]
+        },
+        "requirements": [],
+        "permission_policy": "ask"
+      }
+    ]
+  }
+}
