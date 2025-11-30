@@ -51,9 +51,9 @@ Execute Emacs Lisp code in a running Emacs instance.
    osaurus tools install .
    ```
 
-## Publishing (Automated)
+## Publishing
 
-This repository includes a portable GitHub Actions workflow that automatically builds, signs, releases, and registers your plugin.
+This repository includes a portable GitHub Actions workflow that automatically builds, signs, and releases your plugin.
 
 ### Using This Workflow for Your Own Plugin
 
@@ -104,14 +104,13 @@ To code sign the dylib for distribution, you need a Developer ID Application cer
 
 Go to **Settings → Secrets and variables → Actions → Secrets** and add:
 
-| Secret                                | Value                                                                                                             |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `REGISTRY_PAT`                        | Personal Access Token with `repo` scope for [dinoki-ai/osaurus-tools](https://github.com/dinoki-ai/osaurus-tools) |
-| `MINISIGN_SECRET_KEY`                 | Contents of `minisign.key` (the entire private key file)                                                          |
-| `MINISIGN_PUBLIC_KEY`                 | Public key string (second line of `.pub` file, starts with `RW...`)                                               |
-| `MINISIGN_PASSWORD`                   | Password you set when generating the key (leave empty if none)                                                    |
-| `DEVELOPER_ID_CERTIFICATE_P12_BASE64` | Base64-encoded `.p12` certificate (from step 2)                                                                   |
-| `DEVELOPER_ID_CERTIFICATE_PASSWORD`   | Password you set when exporting the certificate                                                                   |
+| Secret                                | Value                                                               |
+| ------------------------------------- | ------------------------------------------------------------------- |
+| `MINISIGN_SECRET_KEY`                 | Contents of `minisign.key` (the entire private key file)            |
+| `MINISIGN_PUBLIC_KEY`                 | Public key string (second line of `.pub` file, starts with `RW...`) |
+| `MINISIGN_PASSWORD`                   | Password you set when generating the key (leave empty if none)      |
+| `DEVELOPER_ID_CERTIFICATE_P12_BASE64` | Base64-encoded `.p12` certificate (from step 2)                     |
+| `DEVELOPER_ID_CERTIFICATE_PASSWORD`   | Password you set when exporting the certificate                     |
 
 ### Creating a Release
 
@@ -128,7 +127,19 @@ The workflow will automatically:
 - ✅ Code sign the dylib (if certificate secrets are configured)
 - ✅ Sign artifact with minisign
 - ✅ Create a GitHub Release with artifacts
-- ✅ Open a PR to the [osaurus-tools registry](https://github.com/dinoki-ai/osaurus-tools)
+- ✅ Generate the registry entry JSON
+
+### Submitting to the Registry
+
+After the workflow completes, check the **Actions** tab and open the workflow run. In the **Summary** section, you'll find instructions and the generated registry entry JSON.
+
+To submit your plugin:
+
+1. Download the `registry-entry` artifact from the workflow run
+2. Fork [dinoki-ai/osaurus-tools](https://github.com/dinoki-ai/osaurus-tools)
+3. Copy the JSON to `plugins/your.plugin.id.json`
+4. If updating an existing plugin, merge the new version into the `versions` array
+5. Create a PR to the upstream repository
 
 ### Manual Publishing
 
