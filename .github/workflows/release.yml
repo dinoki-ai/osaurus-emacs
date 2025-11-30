@@ -343,9 +343,20 @@ jobs:
           name: registry-entry
           path: registry-entry.json
 
+      - name: Check for registry PAT
+        id: check-pat
+        env:
+          REGISTRY_PAT: ${{ secrets.REGISTRY_PAT }}
+        run: |
+          if [ -n "$REGISTRY_PAT" ]; then
+            echo "has_pat=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_pat=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create PR via fork (automated)
         id: auto-pr
-        if: ${{ secrets.REGISTRY_PAT != '' }}
+        if: steps.check-pat.outputs.has_pat == 'true'
         env:
           GH_TOKEN: ${{ secrets.REGISTRY_PAT }}
           VERSION: ${{ needs.build.outputs.version }}
