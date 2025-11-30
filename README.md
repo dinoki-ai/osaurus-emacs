@@ -71,7 +71,6 @@ env:
   LICENSE: MIT
   MIN_MACOS: "13.0"
   MIN_OSAURUS: "0.5.0"
-  REGISTRY_REPO: dinoki-ai/osaurus-tools
 ```
 
 ### Setup (One-time)
@@ -127,19 +126,16 @@ The workflow will automatically:
 - ✅ Code sign the dylib (if certificate secrets are configured)
 - ✅ Sign artifact with minisign
 - ✅ Create a GitHub Release with artifacts
-- ✅ Generate the registry entry JSON
+- ✅ Generate the registry entry JSON in `release/` folder
 
 ### Submitting to the Registry
 
-After the workflow completes, check the **Actions** tab and open the workflow run. In the **Summary** section, you'll find instructions and the generated registry entry JSON.
+After the workflow completes, you'll find the registry entry at `release/<plugin-id>.json`. To submit:
 
-To submit your plugin:
-
-1. Download the `registry-entry` artifact from the workflow run
-2. Fork [dinoki-ai/osaurus-tools](https://github.com/dinoki-ai/osaurus-tools)
-3. Copy the JSON to `plugins/your.plugin.id.json`
-4. If updating an existing plugin, merge the new version into the `versions` array
-5. Create a PR to the upstream repository
+1. Fork [dinoki-ai/osaurus-tools](https://github.com/dinoki-ai/osaurus-tools)
+2. Copy `release/<plugin-id>.json` to `plugins/<plugin-id>.json` in your fork
+3. If updating an existing plugin, merge the new version into the `versions` array
+4. Create a PR to the upstream repository
 
 ### Manual Publishing
 

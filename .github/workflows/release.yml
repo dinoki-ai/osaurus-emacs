@@ -57,9 +57,6 @@ env:
   # Minimum Osaurus version required (optional)
   MIN_OSAURUS: "0.5.0"
 
-  # Registry repository to open PRs against
-  REGISTRY_REPO: dinoki-ai/osaurus-tools
-
 # =============================================================================
 # JOBS - No changes needed below this line
 # =============================================================================
@@ -243,6 +240,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download build outputs
         uses: actions/download-artifact@v4
         with:
@@ -259,6 +259,8 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
           MINISIGN_PUBLIC_KEY: ${{ secrets.MINISIGN_PUBLIC_KEY }}
         run: |
+          mkdir -p release
+
           # Decode signature if present
           if [ -n "$SIGNATURE_B64" ]; then
             MINISIGN_SIG=$(echo "$SIGNATURE_B64" | base64 -d)
@@ -324,6 +326,7 @@ jobs:
               "license": license_type,
               "authors": [repo_owner],
               "capabilities": {"tools": tools},
+              "public_keys": {"minisign": minisign_public_key} if minisign_public_key else {},
               "versions": [{
                   "version": version,
                   "release_date": datetime.utcnow().strftime("%Y-%m-%d"),
@@ -331,36 +334,20 @@ jobs:
               }]
           }
 
-          if minisign_public_key:
-              data["public_keys"] = {"minisign": minisign_public_key}
+          # Remove empty public_keys
+          if not data["public_keys"]:
+              del data["public_keys"]
 
-          with open('registry-entry.json', 'w') as f:
+          with open(f'release/{plugin_id}.json', 'w') as f:
               json.dump(data, f, indent=2)
 
-          print(f"Generated registry-entry.json for {plugin_id} v{version}")
+          print(f"Generated release/{plugin_id}.json for v{version}")
           PYTHON_SCRIPT
 
-      - name: Upload registry entry artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: registry-entry
-          path: registry-entry.json
-
-      - name: Output submission instructions
+      - name: Commit registry entry
         run: |
-          echo "## 📦 Registry Submission" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "To register this plugin in the Osaurus registry:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "1. Download the \`registry-entry\` artifact from this workflow run" >> $GITHUB_STEP_SUMMARY
-          echo "2. Fork [dinoki-ai/osaurus-tools](https://github.com/${{ env.REGISTRY_REPO }})" >> $GITHUB_STEP_SUMMARY
-          echo "3. Copy the JSON to \`plugins/${{ env.PLUGIN_ID }}.json\`" >> $GITHUB_STEP_SUMMARY
-          echo "4. If updating an existing plugin, merge the new version into the \`versions\` array" >> $GITHUB_STEP_SUMMARY
-          echo "5. Create a PR to the upstream repository" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Generated Entry" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-          cat registry-entry.json >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add release/
+          git commit -m "Update registry entry for ${{ needs.build.outputs.version }}"
+          git push origin HEAD:master
