@@ -32,11 +32,21 @@ Execute Emacs Lisp code in a running Emacs instance.
 ## Development
 
 1. Build:
+
    ```bash
    swift build -c release
    cp .build/release/libEmacs.dylib ./libEmacs.dylib
    ```
-2. Install:
+
+2. Sign the dylib (required for distributed plugins):
+
+   ```bash
+   codesign -s "Developer ID Application: Your Name (TEAMID)" ./libEmacs.dylib
+   ```
+
+   > **Note:** For local development/testing, you can skip signing. It's only required when distributing the plugin.
+
+3. Install:
    ```bash
    osaurus tools install .
    ```
@@ -78,16 +88,30 @@ This creates:
 - `minisign.pub` - Public key (share this)
 - `minisign.key` - Private key (keep secret!)
 
-#### 2. Add Repository Secrets
+#### 2. Export Your Apple Developer Certificate
+
+To code sign the dylib for distribution, you need a Developer ID Application certificate:
+
+1. Open Keychain Access on your Mac
+2. Find your "Developer ID Application" certificate
+3. Right-click → Export → Save as `.p12` with a password
+4. Base64 encode it:
+   ```bash
+   base64 -i certificate.p12 | pbcopy
+   ```
+
+#### 3. Add Repository Secrets
 
 Go to **Settings → Secrets and variables → Actions → Secrets** and add:
 
-| Secret                | Value                                                                                                             |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `REGISTRY_PAT`        | Personal Access Token with `repo` scope for [dinoki-ai/osaurus-tools](https://github.com/dinoki-ai/osaurus-tools) |
-| `MINISIGN_SECRET_KEY` | Contents of `minisign.key` (the entire private key file)                                                          |
-| `MINISIGN_PUBLIC_KEY` | Public key string (second line of `.pub` file, starts with `RW...`)                                               |
-| `MINISIGN_PASSWORD`   | Password you set when generating the key (leave empty if none)                                                    |
+| Secret                                | Value                                                                                                             |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `REGISTRY_PAT`                        | Personal Access Token with `repo` scope for [dinoki-ai/osaurus-tools](https://github.com/dinoki-ai/osaurus-tools) |
+| `MINISIGN_SECRET_KEY`                 | Contents of `minisign.key` (the entire private key file)                                                          |
+| `MINISIGN_PUBLIC_KEY`                 | Public key string (second line of `.pub` file, starts with `RW...`)                                               |
+| `MINISIGN_PASSWORD`                   | Password you set when generating the key (leave empty if none)                                                    |
+| `DEVELOPER_ID_CERTIFICATE_P12_BASE64` | Base64-encoded `.p12` certificate (from step 2)                                                                   |
+| `DEVELOPER_ID_CERTIFICATE_PASSWORD`   | Password you set when exporting the certificate                                                                   |
 
 ### Creating a Release
 
@@ -101,7 +125,8 @@ git push origin 1.0.0
 The workflow will automatically:
 
 - ✅ Build the plugin for macOS arm64
-- ✅ Sign with minisign
+- ✅ Code sign the dylib (if certificate secrets are configured)
+- ✅ Sign artifact with minisign
 - ✅ Create a GitHub Release with artifacts
 - ✅ Open a PR to the [osaurus-tools registry](https://github.com/dinoki-ai/osaurus-tools)
 
@@ -111,6 +136,12 @@ If you prefer to publish manually:
 
 ```bash
 swift build -c release
+
+# Sign the dylib (REQUIRED for distributed plugins)
+codesign --force --options runtime --timestamp \
+  --sign "Developer ID Application: Your Name (TEAMID)" \
+  .build/release/libEmacs.dylib
+
 mkdir dist && cp .build/release/libEmacs.dylib manifest.json dist/
 cd dist && zip -r ../osaurus.emacs-1.0.0.zip .
 minisign -Slm osaurus.emacs-1.0.0.zip -s minisign.key

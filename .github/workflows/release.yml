@@ -11,6 +11,8 @@
 #    - MINISIGN_SECRET_KEY: Your minisign private key
 #    - MINISIGN_PUBLIC_KEY: Your minisign public key
 #    - MINISIGN_PASSWORD: Key password (optional, can be empty)
+#    - DEVELOPER_ID_CERTIFICATE_P12_BASE64: Base64-encoded .p12 certificate (for code signing)
+#    - DEVELOPER_ID_CERTIFICATE_PASSWORD: Password for the .p12 certificate
 #
 # USAGE:
 #   git tag 1.0.0
@@ -78,6 +80,81 @@ jobs:
 
       - name: Build Release
         run: swift build -c release
+
+      - name: Import Code Signing Certificate
+        id: codesign
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$CERTIFICATE_P12_BASE64" ]; then
+            echo "⚠️  No DEVELOPER_ID_CERTIFICATE_P12_BASE64 configured, will use ad-hoc signing"
+            echo "   Note: Code signing is REQUIRED for distributed plugins"
+            echo "identity=" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Create a temporary keychain
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          echo "$CERTIFICATE_P12_BASE64" | base64 --decode > "$CERT_PATH"
+
+          security import "$CERT_PATH" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          # Add keychain to search list
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+          # Allow codesign to access the key without prompting
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Extract signing identity from certificate
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No Developer ID Application certificate found in keychain"
+            exit 1
+          fi
+
+          echo "Found signing identity: $IDENTITY"
+          echo "identity=$IDENTITY" >> $GITHUB_OUTPUT
+
+          # Store keychain path for cleanup
+          echo "keychain_path=$KEYCHAIN_PATH" >> $GITHUB_OUTPUT
+
+          # Clean up temp cert file
+          rm -f "$CERT_PATH"
+
+      - name: Code Sign dylib
+        env:
+          CODESIGN_IDENTITY: ${{ steps.codesign.outputs.identity }}
+        run: |
+          DYLIB_PATH=".build/release/lib${{ env.DYLIB_NAME }}.dylib"
+
+          if [ -z "$CODESIGN_IDENTITY" ]; then
+            echo "⚠️  No signing identity available, using ad-hoc signing"
+            codesign --force --sign - "$DYLIB_PATH"
+          else
+            echo "Signing with: $CODESIGN_IDENTITY"
+            codesign --force --options runtime --timestamp \
+              --sign "$CODESIGN_IDENTITY" \
+              "$DYLIB_PATH"
+          fi
+
+          # Verify signature
+          codesign -dv --verbose=4 "$DYLIB_PATH"
+          echo "✅ Code signing completed successfully"
 
       - name: Get version from tag
         id: version
@@ -149,6 +226,14 @@ jobs:
           path: |
             ${{ env.PLUGIN_ID }}-${{ steps.version.outputs.VERSION }}.zip
             manifest.json
+
+      - name: Cleanup Keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH="${{ steps.codesign.outputs.keychain_path }}"
+          if [ -n "$KEYCHAIN_PATH" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" || true
+          fi
 
   open-registry-pr:
     needs: build

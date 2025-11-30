@@ -5,12 +5,12 @@ let package = Package(
     name: "Emacs",
     platforms: [.macOS(.v13)],
     products: [
-        .library(name: "Emacs", type: .dynamic, targets: ["Plugin"])
+        .library(name: "Emacs", type: .dynamic, targets: ["Emacs"])
     ],
     targets: [
         .target(
-            name: "Plugin",
-            path: "Sources/Plugin"
+            name: "Emacs",
+            path: "Sources/Emacs"
         )
     ]
 )
