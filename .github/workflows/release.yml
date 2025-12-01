@@ -322,6 +322,7 @@ jobs:
           data = {
               "plugin_id": plugin_id,
               "name": plugin_name,
+              "description": plugin_desc,
               "homepage": repo_url,
               "license": license_type,
               "authors": [repo_owner],
