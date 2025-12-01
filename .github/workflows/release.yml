@@ -36,7 +36,7 @@ permissions:
 # CONFIGURATION - Update these values for your plugin
 # =============================================================================
 env:
-  # Your plugin ID (must match manifest.json)
+  # Your plugin ID
   PLUGIN_ID: osaurus.emacs
 
   # Display name for the plugin
@@ -56,6 +56,9 @@ env:
 
   # Minimum Osaurus version required (optional)
   MIN_OSAURUS: "0.5.0"
+
+  # Tool definitions (JSON array of {name, description} objects)
+  TOOLS: '[{"name": "execute_emacs_lisp_code", "description": "Execute Emacs Lisp code in a running Emacs instance via emacsclient. Requires Emacs server to be running (M-x server-start)."}]'
 
 # =============================================================================
 # JOBS - No changes needed below this line
@@ -164,7 +167,6 @@ jobs:
         run: |
           mkdir -p dist
           cp ".build/release/lib${{ env.DYLIB_NAME }}.dylib" dist/
-          cp manifest.json dist/
           cd dist
           zip -r "../${{ env.PLUGIN_ID }}-${{ steps.version.outputs.VERSION }}.zip" .
 
@@ -225,7 +227,6 @@ jobs:
           name: build-outputs
           path: |
             ${{ env.PLUGIN_ID }}-${{ steps.version.outputs.VERSION }}.zip
-            manifest.json
 
       - name: Cleanup Keychain
         if: always()
@@ -275,10 +276,6 @@ jobs:
           import os
           from datetime import datetime
 
-          # Read manifest for tool definitions
-          with open('manifest.json', 'r') as f:
-              manifest = json.load(f)
-
           plugin_id = os.environ["PLUGIN_ID"]
           plugin_name = os.environ["PLUGIN_NAME"]
           plugin_desc = os.environ["PLUGIN_DESCRIPTION"]
@@ -298,14 +295,8 @@ jobs:
           except:
               minisign_sig = ""
 
-          # Extract tools from manifest
-          tools = []
-          if "capabilities" in manifest and "tools" in manifest["capabilities"]:
-              for tool in manifest["capabilities"]["tools"]:
-                  tools.append({
-                      "name": tool.get("id", tool.get("name", "")),
-                      "description": tool.get("description", "")
-                  })
+          # Get tools from TOOLS env var
+          tools = json.loads(os.environ.get("TOOLS", "[]"))
 
           artifact = {
               "os": "macos",

@@ -64,13 +64,14 @@ The workflow at `.github/workflows/release.yml` is designed to be easily reusabl
 
 ```yaml
 env:
-  PLUGIN_ID: your.plugin.id # Must match manifest.json
+  PLUGIN_ID: your.plugin.id
   PLUGIN_NAME: Your Plugin # Display name
   PLUGIN_DESCRIPTION: What it does
   DYLIB_NAME: YourLibrary # Without lib prefix and .dylib extension
   LICENSE: MIT
   MIN_MACOS: "13.0"
   MIN_OSAURUS: "0.5.0"
+  TOOLS: '[{"name": "tool_name", "description": "Tool description"}]'
 ```
 
 ### Setup (One-time)
@@ -149,7 +150,7 @@ codesign --force --options runtime --timestamp \
   --sign "Developer ID Application: Your Name (TEAMID)" \
   .build/release/libEmacs.dylib
 
-mkdir dist && cp .build/release/libEmacs.dylib manifest.json dist/
+mkdir dist && cp .build/release/libEmacs.dylib dist/
 cd dist && zip -r ../osaurus.emacs-1.0.0.zip .
 minisign -Slm osaurus.emacs-1.0.0.zip -s minisign.key
 ```
